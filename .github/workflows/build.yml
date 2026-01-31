@@ -1,8 +1,8 @@
-name: Build YouTube anndea (Smart Check)
+name: Build YouTube anndea (Pre-release Support)
 on:
   schedule:
-    - cron: '0,0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *' # Sprawdzaj co godzinę
+  workflow_dispatch:      # Możliwość ręcznego odpalenia
 
 jobs:
   check_and_build:
@@ -16,18 +16,31 @@ jobs:
       - name: Get Latest anndea Release Info
         id: remote
         run: |
-          REMOTE_TAG=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases/latest | jq -r '.tag_name')
+          # Pobieramy info o ostatnim wydaniu (nawet pre-release)
+          REMOTE_JSON=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases | jq '.[0]')
+          REMOTE_TAG=$(echo "$REMOTE_JSON" | jq -r '.tag_name')
+          IS_PRE=$(echo "$REMOTE_JSON" | jq -r '.prerelease')
+          CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body')
+          
           echo "REMOTE_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-          LOCAL_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name' || echo "none")
+          echo "IS_PRE=$IS_PRE" >> $GITHUB_ENV
+          
+          echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
+          echo "$CHANGELOG" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          # Pobieramy tag Twojego ostatniego wydania (z obsługą braku wydań)
+          LOCAL_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases | jq -r '.[0].tag_name // "none"')
           echo "LOCAL_TAG=$LOCAL_TAG" >> $GITHUB_ENV
 
       - name: Compare Versions
         id: compare
         run: |
           if [ "${{ env.REMOTE_TAG }}" == "${{ env.LOCAL_TAG }}" ]; then
-            echo "Brak nowych łatek. Przerywam."
+            echo "Brak nowych łatek (nawet testowych). Kończę pracę."
             exit 0
           else
+            echo "Znaleziono nową wersję (${{ env.REMOTE_TAG }}). Startuję build."
             echo "PROCEED=true" >> $GITHUB_ENV
           fi
 
@@ -38,17 +51,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Get anndea Changelog
-        if: env.PROCEED == 'true'
-        run: |
-          CHANGELOG=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases/latest | jq -r '.body')
-          echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
-          echo "$CHANGELOG" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
       - name: Build APK
         if: env.PROCEED == 'true'
         run: |
+          # Budowanie bez łatki Material You (theme)
           npx revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
@@ -61,8 +67,13 @@ jobs:
           files: github-builds/*.apk
           tag_name: ${{ env.REMOTE_TAG }}
           name: YouTube anndea - ${{ env.REMOTE_TAG }}
+          prerelease: ${{ env.IS_PRE == 'true' }}
           body: |
             ### Changelog od anndea:
             ${{ env.ANN_CHANGELOG }}
+            
+            ---
+            *Automatyczny build: Co godzinę | Bez Material You*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
