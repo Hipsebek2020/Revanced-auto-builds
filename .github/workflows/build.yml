@@ -1,0 +1,68 @@
+name: Build YouTube anndea (Smart Check)
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check_and_build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Latest anndea Release Info
+        id: remote
+        run: |
+          REMOTE_TAG=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases/latest | jq -r '.tag_name')
+          echo "REMOTE_TAG=$REMOTE_TAG" >> $GITHUB_ENV
+          LOCAL_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name' || echo "none")
+          echo "LOCAL_TAG=$LOCAL_TAG" >> $GITHUB_ENV
+
+      - name: Compare Versions
+        id: compare
+        run: |
+          if [ "${{ env.REMOTE_TAG }}" == "${{ env.LOCAL_TAG }}" ]; then
+            echo "Brak nowych łatek. Przerywam."
+            exit 0
+          else
+            echo "PROCEED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Set up JDK 17
+        if: env.PROCEED == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Get anndea Changelog
+        if: env.PROCEED == 'true'
+        run: |
+          CHANGELOG=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases/latest | jq -r '.body')
+          echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
+          echo "$CHANGELOG" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Build APK
+        if: env.PROCEED == 'true'
+        run: |
+          npx revanced-creator build \
+            --repo anndea/revanced-patches \
+            --app com.google.android.youtube \
+            --exclude "theme"
+
+      - name: Upload to Releases
+        if: env.PROCEED == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: github-builds/*.apk
+          tag_name: ${{ env.REMOTE_TAG }}
+          name: YouTube anndea - ${{ env.REMOTE_TAG }}
+          body: |
+            ### Changelog od anndea:
+            ${{ env.ANN_CHANGELOG }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
