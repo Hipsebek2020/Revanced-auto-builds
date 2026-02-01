@@ -1,42 +1,87 @@
-- name: Check for Updates
+name: Build YouTube anndea Optimized
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check for Updates
         id: check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Pobieranie danych o łatkach anndea..."
-          # Dodajemy autoryzację też tutaj, żeby uniknąć Rate Limit
-          REMOTE_JSON_LIST=$(curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/anndea/revanced-patches/releases)
+          echo "Sprawdzam wersję u anndea..."
+          # Pobieranie listy wydań z autoryzacją
+          RESPONSE=$(curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/anndea/revanced-patches/releases)
           
-          # Sprawdzamy czy dostaliśmy listę, czy błąd
-          if echo "$REMOTE_JSON_LIST" | jq -e 'type=="array"' > /dev/null; then
-            REMOTE_JSON=$(echo "$REMOTE_JSON_LIST" | jq '.[0]')
+          # Sprawdzenie czy odpowiedź to tablica
+          if echo "$RESPONSE" | jq -e 'type=="array"' > /dev/null; then
+            REMOTE_JSON=$(echo "$RESPONSE" | jq '.[0]')
             REMOTE_TAG=$(echo "$REMOTE_JSON" | jq -r '.tag_name // "null"')
             IS_PRE=$(echo "$REMOTE_JSON" | jq -r '.prerelease // false')
+            CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body // "Brak opisu."')
           else
-            echo "Błąd API GitHub przy pobieraniu danych anndea!"
+            echo "Błąd: GitHub API zwróciło błąd zamiast listy wersji."
             exit 1
           fi
 
-          echo "Pobieranie danych o Twoim repozytorium..."
-          LOCAL_JSON=$(curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/${{ github.repository }}/releases)
-          
-          # Bezpieczne wyciąganie tagu lokalnego
-          LOCAL_TAG=$(echo "$LOCAL_JSON" | jq -r 'if type=="array" and length>0 then .[0].tag_name else "none" end')
+          echo "Sprawdzam Twoją wersję..."
+          LOCAL_RESPONSE=$(curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/${{ github.repository }}/releases)
+          LOCAL_TAG=$(echo "$LOCAL_RESPONSE" | jq -r 'if type=="array" and length>0 then .[0].tag_name else "none" end')
 
           echo "Wersja anndea: $REMOTE_TAG"
           echo "Twoja wersja:  $LOCAL_TAG"
 
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
-            echo "Znaleziono aktualizację. Przygotowuję build..."
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
             echo "IS_PRE=$IS_PRE" >> $GITHUB_ENV
-            
-            CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body // "Brak opisu zmian."')
             echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
             echo "$CHANGELOG" >> $GITHUB_ENV
             echo "EOF" >> $GITHUB_ENV
           else
-            echo "Brak nowych łatek lub wersje są identyczne. Przerywam."
             echo "should_build=false" >> $GITHUB_ENV
           fi
+
+      - name: Set up JDK 17
+        if: env.should_build == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build YouTube APK
+        if: env.should_build == 'true'
+        run: |
+          npx revanced-creator build \
+            --repo anndea/revanced-patches \
+            --app com.google.android.youtube \
+            --exclude "theme"
+
+      - name: Create Release
+        if: env.should_build == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: github-builds/*.apk
+          tag_name: ${{ env.VERSION_TAG }}
+          name: YouTube anndea ${{ env.VERSION_TAG }}
+          prerelease: ${{ env.IS_PRE == 'true' }}
+          body: |
+            ### 🤖 Automatyczny Build
+            **Wersja łatek:** `${{ env.VERSION_TAG }}`
+            
+            ---
+            ### 📝 Changelog od anndea:
+            ${{ env.ANN_CHANGELOG }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
