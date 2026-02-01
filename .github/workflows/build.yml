@@ -1,79 +1,88 @@
-name: Build YouTube anndea (Pre-release Support)
+
+name: Build YouTube anndea (Optimized)
+
 on:
   schedule:
-    - cron: '0 * * * *' # Sprawdzaj co godzinę
-  workflow_dispatch:      # Możliwość ręcznego odpalenia
+    - cron: '0 * * * *' # Sprawdza równo co godzinę
+  workflow_dispatch:      # Pozwala na ręczne uruchomienie
 
 jobs:
-  check_and_build:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15   # ZABEZPIECZENIE: Ubija proces po 15 min, by oszczędzać limit
     permissions:
-      contents: write
+      contents: write     # Wymagane do tworzenia Release
+
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Get Latest anndea Release Info
-        id: remote
+      - name: Check for Updates
+        id: check
         run: |
-          # Pobieramy info o ostatnim wydaniu (nawet pre-release)
-          REMOTE_JSON=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases | jq '.[0]')
+          # 1. Pobierz info o najnowszym wydaniu anndea (w tym pre-release)
+          echo "Sprawdzam wersję u anndea..."
+          REMOTE_JSON=$(curl -sL https://api.github.com/repos/anndea/revanced-patches/releases | jq '.[0]')
           REMOTE_TAG=$(echo "$REMOTE_JSON" | jq -r '.tag_name')
           IS_PRE=$(echo "$REMOTE_JSON" | jq -r '.prerelease')
-          CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body')
           
-          echo "REMOTE_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-          echo "IS_PRE=$IS_PRE" >> $GITHUB_ENV
-          
-          echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
-          echo "$CHANGELOG" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-          
-          # Pobieramy tag Twojego ostatniego wydania (z obsługą braku wydań)
-          LOCAL_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases | jq -r '.[0].tag_name // "none"')
-          echo "LOCAL_TAG=$LOCAL_TAG" >> $GITHUB_ENV
+          # 2. Pobierz info o Twoim ostatnim wydaniu (jeśli istnieje)
+          LOCAL_TAG=$(curl -sL https://api.github.com/repos/${{ github.repository }}/releases | jq -r '.[0].tag_name // "none"')
 
-      - name: Compare Versions
-        id: compare
-        run: |
-          if [ "${{ env.REMOTE_TAG }}" == "${{ env.LOCAL_TAG }}" ]; then
-            echo "Brak nowych łatek (nawet testowych). Kończę pracę."
-            exit 0
+          echo "Wersja anndea: $REMOTE_TAG (Pre-release: $IS_PRE)"
+          echo "Twoja wersja:  $LOCAL_TAG"
+
+          # 3. Porównanie
+          if [ "$REMOTE_TAG" == "$LOCAL_TAG" ]; then
+            echo "::notice::Brak nowości. Wersje są zgodne."
+            echo "should_build=false" >> $GITHUB_ENV
           else
-            echo "Znaleziono nową wersję (${{ env.REMOTE_TAG }}). Startuję build."
-            echo "PROCEED=true" >> $GITHUB_ENV
+            echo "::notice::Znaleziono aktualizację! Rozpoczynam proces."
+            echo "should_build=true" >> $GITHUB_ENV
+            echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
+            echo "IS_PRE=$IS_PRE" >> $GITHUB_ENV
+            
+            # Pobieranie changeloga tylko gdy potrzebny
+            CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body')
+            echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
+            echo "$CHANGELOG" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
           fi
 
       - name: Set up JDK 17
-        if: env.PROCEED == 'true'
+        if: env.should_build == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build APK
-        if: env.PROCEED == 'true'
+      - name: Build YouTube APK
+        if: env.should_build == 'true'
         run: |
-          # Budowanie bez łatki Material You (theme)
+          # Budowanie z wykluczeniem Material You
           npx revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
             --exclude "theme"
 
-      - name: Upload to Releases
-        if: env.PROCEED == 'true'
+      - name: Create Release
+        if: env.should_build == 'true'
         uses: softprops/action-gh-release@v1
         with:
           files: github-builds/*.apk
-          tag_name: ${{ env.REMOTE_TAG }}
-          name: YouTube anndea - ${{ env.REMOTE_TAG }}
+          tag_name: ${{ env.VERSION_TAG }}
+          name: YouTube anndea ${{ env.VERSION_TAG }}
           prerelease: ${{ env.IS_PRE == 'true' }}
           body: |
-            ### Changelog od anndea:
+            ### 🤖 Automatyczny Build
+            **Wersja łatek:** `${{ env.VERSION_TAG }}`
+            **Status:** ${{ env.IS_PRE == 'true' && 'Beta (Pre-release)' || 'Stabilna' }}
+            
+            ---
+            ### 📝 Zmiany w łatkach (anndea):
             ${{ env.ANN_CHANGELOG }}
             
             ---
-            *Automatyczny build: Co godzinę | Bez Material You*
+            *Wykluczone łatki: Material You (theme)*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
