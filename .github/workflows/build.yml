@@ -1,46 +1,32 @@
-name: Build YouTube anndea Optimized
+name: Build YouTube & Piko X (Twitter)
 on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
-  build:
+  # --- JOB 1: YOUTUBE ---
+  build-youtube:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: write
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check for Updates
+      - name: Check for YouTube Updates
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Pobieram wersję od anndea..."
-          # Używamy oficjalnego narzędzia 'gh' zamiast curl, jest bardziej stabilne
           REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
+          LOCAL_TAG=$(gh release list --limit 10 | grep "YouTube-v" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
           
-          echo "Pobieram Twoją ostatnią wersję..."
-          LOCAL_TAG=$(gh release list --limit 1 | awk '{print $3}' || echo "none")
-
-          echo "Wersja anndea: $REMOTE_TAG"
-          echo "Twoja wersja:  $LOCAL_TAG"
-
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            
-            # Pobieramy opis zmian przez 'gh'
-            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > changelog.txt
-            echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
-            cat changelog.txt >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
           else
-            echo "Brak zmian. Przerywam."
             echo "should_build=false" >> $GITHUB_ENV
           fi
 
@@ -51,28 +37,67 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build YouTube APK
+      - name: Build YouTube
         if: env.should_build == 'true'
-        run: |
-          # Budowanie z wykluczeniem theme (Material You)
-          npx revanced-creator build \
-            --repo anndea/revanced-patches \
-            --app com.google.android.youtube \
-            --exclude "theme"
+        run: npx revanced-creator build --repo anndea/revanced-patches --app com.google.android.youtube --exclude "theme"
 
-      - name: Create Release
+      - name: Create YouTube Release
         if: env.should_build == 'true'
         uses: softprops/action-gh-release@v1
         with:
           files: github-builds/*.apk
-          tag_name: ${{ env.VERSION_TAG }}
+          tag_name: YouTube-${{ env.VERSION_TAG }}
           name: YouTube anndea ${{ env.VERSION_TAG }}
-          body: |
-            ### 🤖 Automatyczny Build
-            **Wersja łatek:** `${{ env.VERSION_TAG }}`
-            
-            ---
-            ### 📝 Changelog od anndea:
-            ${{ env.ANN_CHANGELOG }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- JOB 2: PIKO X (TWITTER) ---
+  build-piko-x:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check for Piko X Updates
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
+          LOCAL_TAG=$(gh release list --limit 10 | grep "PikoX-v" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
+          
+          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
+            echo "should_build=true" >> $GITHUB_ENV
+            echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
+          else
+            echo "should_build=false" >> $GITHUB_ENV
+          fi
+
+      - name: Set up JDK 17
+        if: env.should_build == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build Piko X
+        if: env.should_build == 'true'
+        run: |
+          # Dla Twittera (Piko X) wykluczamy 'custom-branding', aby zachować oryginalne logo X
+          npx revanced-creator build \
+            --repo anndea/revanced-patches \
+            --app com.twitter.android \
+            --exclude "custom-branding"
+
+      - name: Create Piko X Release
+        if: env.should_build == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: github-builds/*.apk
+          tag_name: PikoX-${{ env.VERSION_TAG }}
+          name: Piko X (Twitter) anndea ${{ env.VERSION_TAG }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
