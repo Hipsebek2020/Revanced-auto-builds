@@ -1,17 +1,16 @@
-
-name: Build YouTube anndea (Optimized)
+name: Build YouTube anndea (Final Optimized)
 
 on:
   schedule:
-    - cron: '0 * * * *' # Sprawdza równo co godzinę
-  workflow_dispatch:      # Pozwala na ręczne uruchomienie
+    - cron: '0 * * * *' # Sprawdza co godzinę
+  workflow_dispatch:      # Pozwala na ręczne uruchomienie w dowolnym momencie
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15   # ZABEZPIECZENIE: Ubija proces po 15 min, by oszczędzać limit
+    timeout-minutes: 20   # Zabezpieczenie przed zawieszeniem procesu
     permissions:
-      contents: write     # Wymagane do tworzenia Release
+      contents: write     # Wymagane do publikacji pliku APK w Releases
 
     steps:
       - name: Checkout Repository
@@ -19,34 +18,40 @@ jobs:
 
       - name: Check for Updates
         id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Pobierz info o najnowszym wydaniu anndea (w tym pre-release)
-          echo "Sprawdzam wersję u anndea..."
+          echo "Pobieranie danych o łatkach anndea..."
+          # Pobieramy info o ostatnim wydaniu anndea
           REMOTE_JSON=$(curl -sL https://api.github.com/repos/anndea/revanced-patches/releases | jq '.[0]')
-          REMOTE_TAG=$(echo "$REMOTE_JSON" | jq -r '.tag_name')
-          IS_PRE=$(echo "$REMOTE_JSON" | jq -r '.prerelease')
-          
-          # 2. Pobierz info o Twoim ostatnim wydaniu (jeśli istnieje)
-          LOCAL_TAG=$(curl -sL https://api.github.com/repos/${{ github.repository }}/releases | jq -r '.[0].tag_name // "none"')
+          REMOTE_TAG=$(echo "$REMOTE_JSON" | jq -r '.tag_name // "null"')
+          IS_PRE=$(echo "$REMOTE_JSON" | jq -r '.prerelease // false')
 
-          echo "Wersja anndea: $REMOTE_TAG (Pre-release: $IS_PRE)"
+          echo "Pobieranie danych o Twoim repozytorium..."
+          # Pobieramy info o Twoim ostatnim wydaniu (z autoryzacją)
+          LOCAL_JSON=$(curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/${{ github.repository }}/releases)
+          
+          # Bezpieczne wyciąganie tagu lokalnego
+          LOCAL_TAG=$(echo "$LOCAL_JSON" | jq -r 'if type=="array" and length>0 then .[0].tag_name else "none" end')
+
+          echo "Wersja anndea: $REMOTE_TAG"
           echo "Twoja wersja:  $LOCAL_TAG"
 
-          # 3. Porównanie
-          if [ "$REMOTE_TAG" == "$LOCAL_TAG" ]; then
-            echo "::notice::Brak nowości. Wersje są zgodne."
-            echo "should_build=false" >> $GITHUB_ENV
-          else
-            echo "::notice::Znaleziono aktualizację! Rozpoczynam proces."
+          # Warunek: Czy budować?
+          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
+            echo "Znaleziono aktualizację. Przygotowuję build..."
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
             echo "IS_PRE=$IS_PRE" >> $GITHUB_ENV
             
-            # Pobieranie changeloga tylko gdy potrzebny
-            CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body')
+            # Przygotowanie changeloga
+            CHANGELOG=$(echo "$REMOTE_JSON" | jq -r '.body // "Brak opisu zmian."')
             echo "ANN_CHANGELOG<<EOF" >> $GITHUB_ENV
             echo "$CHANGELOG" >> $GITHUB_ENV
             echo "EOF" >> $GITHUB_ENV
+          else
+            echo "Brak nowych łatek lub błąd połączenia. Przerywam."
+            echo "should_build=false" >> $GITHUB_ENV
           fi
 
       - name: Set up JDK 17
@@ -59,7 +64,7 @@ jobs:
       - name: Build YouTube APK
         if: env.should_build == 'true'
         run: |
-          # Budowanie z wykluczeniem Material You
+          # Budowanie z wykluczeniem łatki 'theme' (Material You)
           npx revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
@@ -76,13 +81,12 @@ jobs:
           body: |
             ### 🤖 Automatyczny Build
             **Wersja łatek:** `${{ env.VERSION_TAG }}`
-            **Status:** ${{ env.IS_PRE == 'true' && 'Beta (Pre-release)' || 'Stabilna' }}
             
             ---
-            ### 📝 Zmiany w łatkach (anndea):
+            ### 📝 Changelog od anndea:
             ${{ env.ANN_CHANGELOG }}
             
             ---
-            *Wykluczone łatki: Material You (theme)*
+            *Informacja: Zbudowano bez łatki Material You (standardowe kolory).*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
