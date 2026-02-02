@@ -1,7 +1,7 @@
 name: Build YouTube & Piko X (Twitter)
 on:
   schedule:
-    - cron: '0 */2 * * *'  # Co 2 godziny zamiast co godzinę (oszczędność limitów)
+    - cron: '0 */2 * * *'  # Sprawdzanie co 2 godziny
   workflow_dispatch:
 
 jobs:
@@ -20,22 +20,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Pobierz najnowszy tag z anndea
+          # Pobieramy czysty tag od anndea (np. 2.221.1)
           REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
           
-          # Pobierz najnowszy lokalny tag YouTube
-          LOCAL_TAG=$(gh release list --limit 20 | grep -E "^YouTube-v" | head -n 1 | awk '{print $3}' | sed 's/YouTube-v//' || echo "none")
+          # Pobieramy Twój tag i usuwamy prefix "YouTube-" aby zostały same cyfry
+          LOCAL_TAG=$(gh release list --limit 20 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
           
-          echo "Remote patches version: $REMOTE_TAG"
-          echo "Local YouTube version: $LOCAL_TAG"
+          echo "Wersja u anndea: $REMOTE_TAG"
+          echo "Twoja wersja: $LOCAL_TAG"
           
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            echo "✅ New version detected - will build"
           else
             echo "should_build=false" >> $GITHUB_ENV
-            echo "ℹ️ No update needed"
           fi
 
       - name: Set up JDK 17
@@ -48,10 +46,7 @@ jobs:
       - name: Build YouTube
         if: env.should_build == 'true'
         run: |
-          # Usuń stare buildy
           rm -rf github-builds
-          
-          # Zbuduj YouTube z wykluczeniem motywu
           npx revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
@@ -62,14 +57,12 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: github-builds/*.apk
-          tag_name: YouTube-v${{ env.VERSION_TAG }}
-          name: YouTube anndea v${{ env.VERSION_TAG }}
+          tag_name: YouTube-${{ env.VERSION_TAG }}
+          name: YouTube anndea ${{ env.VERSION_TAG }}
           body: |
             📱 YouTube ReVanced - automatyczny build
             🔧 Patches version: ${{ env.VERSION_TAG }}
-            📦 Zbudowano przez GitHub Actions
-            
-            Wykluczono łatkę: theme
+            📦 Wykluczono łatkę: theme
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -88,22 +81,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Pobierz najnowszy tag z anndea
           REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
           
-          # Pobierz najnowszy lokalny tag PikoX
-          LOCAL_TAG=$(gh release list --limit 20 | grep -E "^PikoX-v" | head -n 1 | awk '{print $3}' | sed 's/PikoX-v//' || echo "none")
+          # Pobieramy Twój tag i usuwamy prefix "PikoX-"
+          LOCAL_TAG=$(gh release list --limit 20 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
           
-          echo "Remote patches version: $REMOTE_TAG"
-          echo "Local PikoX version: $LOCAL_TAG"
+          echo "Wersja u anndea: $REMOTE_TAG"
+          echo "Twoja wersja: $LOCAL_TAG"
           
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            echo "✅ New version detected - will build"
           else
             echo "should_build=false" >> $GITHUB_ENV
-            echo "ℹ️ No update needed"
           fi
 
       - name: Set up JDK 17
@@ -116,10 +106,7 @@ jobs:
       - name: Build Piko X
         if: env.should_build == 'true'
         run: |
-          # Usuń stare buildy
           rm -rf github-builds
-          
-          # Dla Twittera (Piko X) wykluczamy 'custom-branding', aby zachować oryginalne logo X
           npx revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.twitter.android \
@@ -130,13 +117,11 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: github-builds/*.apk
-          tag_name: PikoX-v${{ env.VERSION_TAG }}
-          name: Piko X (Twitter) anndea v${{ env.VERSION_TAG }}
+          tag_name: PikoX-${{ env.VERSION_TAG }}
+          name: Piko X (Twitter) anndea ${{ env.VERSION_TAG }}
           body: |
             📱 Piko X (Twitter) ReVanced - automatyczny build
             🔧 Patches version: ${{ env.VERSION_TAG }}
-            📦 Zbudowano przez GitHub Actions
-            
-            Wykluczono łatkę: custom-branding (oryginalne logo X)
+            📦 Wykluczono łatkę: custom-branding (zachowano logo X)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
