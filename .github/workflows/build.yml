@@ -5,121 +5,163 @@ on:
   workflow_dispatch:
 
 jobs:
-  # --- JOB 1: YOUTUBE ---
-  build-youtube:
+  # --- JOB SPRAWDZANIA (szybki, wspólny dla obu) ---
+  check-updates:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 2
+    outputs:
+      should_build_youtube: ${{ steps.check.outputs.youtube }}
+      should_build_pikox: ${{ steps.check.outputs.pikox }}
+      version_tag: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check for Updates
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pobierz wersję z anndea (raz zamiast dwa razy)
+          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
+          echo "version=$REMOTE_TAG" >> $GITHUB_OUTPUT
+          
+          # Sprawdź YouTube
+          LOCAL_YT=$(gh release list --limit 20 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
+          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_YT" ]; then
+            echo "youtube=true" >> $GITHUB_OUTPUT
+            echo "✅ YouTube wymaga buildu"
+          else
+            echo "youtube=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ YouTube aktualne"
+          fi
+          
+          # Sprawdź PikoX
+          LOCAL_PX=$(gh release list --limit 20 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
+          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_PX" ]; then
+            echo "pikox=true" >> $GITHUB_OUTPUT
+            echo "✅ PikoX wymaga buildu"
+          else
+            echo "pikox=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ PikoX aktualne"
+          fi
+
+      - name: Fetch Changelog (jeśli potrzebne)
+        if: steps.check.outputs.youtube == 'true' || steps.check.outputs.pikox == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ steps.check.outputs.version }}" \
+            --repo anndea/revanced-patches \
+            --json body \
+            --template '{{.body}}' > changelog.txt
+
+      - name: Upload Changelog
+        if: steps.check.outputs.youtube == 'true' || steps.check.outputs.pikox == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: changelog.txt
+          retention-days: 1
+
+  # --- JOB 1: YOUTUBE (tylko jeśli potrzebne) ---
+  build-youtube:
+    needs: check-updates
+    if: needs.check-updates.outputs.should_build_youtube == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check for YouTube Updates
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Pobieramy najnowsze wydanie anndea
-          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
-          
-          # Pobieramy Twoje ostatnie wydanie YouTube
-          LOCAL_TAG=$(gh release list --limit 20 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
-          
-          echo "Wersja u anndea: $REMOTE_TAG"
-          echo "Twoja wersja: $LOCAL_TAG"
-          
-          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
-            echo "should_build=true" >> $GITHUB_ENV
-            echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            # Pobieranie treści changeloga
-            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > youtube_changelog.txt
-          else
-            echo "should_build=false" >> $GITHUB_ENV
-          fi
+      - name: Download Changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
 
-      - name: Set up JDK 17
-        if: env.should_build == 'true'
+      - name: Setup JDK 17 & Node.js cache
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
 
       - name: Build YouTube
-        if: env.should_build == 'true'
         run: |
           rm -rf github-builds
-          npx revanced-creator build \
+          npx revanced-creator@latest build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
-            --exclude "theme"
+            --exclude "theme" \
+            --arch arm64-v8a
 
       - name: Create YouTube Release
-        if: env.should_build == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: github-builds/*.apk
-          tag_name: YouTube-${{ env.VERSION_TAG }}
-          name: YouTube anndea ${{ env.VERSION_TAG }}
-          body_path: youtube_changelog.txt
+          tag_name: YouTube-${{ needs.check-updates.outputs.version_tag }}
+          name: YouTube anndea ${{ needs.check-updates.outputs.version_tag }}
+          body_path: changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # --- JOB 2: PIKO X (TWITTER) ---
+  # --- JOB 2: PIKO X (tylko jeśli potrzebne) ---
   build-piko-x:
+    needs: check-updates
+    if: needs.check-updates.outputs.should_build_pikox == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check for Piko X Updates
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
-          
-          # Pobieramy Twoje ostatnie wydanie PikoX
-          LOCAL_TAG=$(gh release list --limit 20 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
-          
-          echo "Wersja u anndea: $REMOTE_TAG"
-          echo "Twoja wersja: $LOCAL_TAG"
-          
-          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
-            echo "should_build=true" >> $GITHUB_ENV
-            echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            # Pobieranie treści changeloga
-            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > pikox_changelog.txt
-          else
-            echo "should_build=false" >> $GITHUB_ENV
-          fi
+      - name: Download Changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
 
-      - name: Set up JDK 17
-        if: env.should_build == 'true'
+      - name: Setup JDK 17 & Node.js cache
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
 
       - name: Build Piko X
-        if: env.should_build == 'true'
         run: |
           rm -rf github-builds
-          npx revanced-creator build \
+          npx revanced-creator@latest build \
             --repo anndea/revanced-patches \
             --app com.twitter.android \
-            --exclude "custom-branding"
+            --exclude "custom-branding" \
+            --arch arm64-v8a
 
       - name: Create Piko X Release
-        if: env.should_build == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: github-builds/*.apk
-          tag_name: PikoX-${{ env.VERSION_TAG }}
-          name: Piko X (Twitter) anndea ${{ env.VERSION_TAG }}
-          body_path: pikox_changelog.txt
+          tag_name: PikoX-${{ needs.check-updates.outputs.version_tag }}
+          name: Piko X (Twitter) anndea ${{ needs.check-updates.outputs.version_tag }}
+          body_path: changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
