@@ -20,10 +20,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Pobieramy czysty tag od anndea (np. 2.221.1)
+          # Pobieramy najnowsze wydanie anndea
           REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
           
-          # Pobieramy Twój tag i usuwamy prefix "YouTube-" aby zostały same cyfry
+          # Pobieramy Twoje ostatnie wydanie YouTube
           LOCAL_TAG=$(gh release list --limit 20 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
           
           echo "Wersja u anndea: $REMOTE_TAG"
@@ -32,6 +32,8 @@ jobs:
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
+            # Pobieranie treści changeloga
+            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > youtube_changelog.txt
           else
             echo "should_build=false" >> $GITHUB_ENV
           fi
@@ -59,10 +61,7 @@ jobs:
           files: github-builds/*.apk
           tag_name: YouTube-${{ env.VERSION_TAG }}
           name: YouTube anndea ${{ env.VERSION_TAG }}
-          body: |
-            📱 YouTube ReVanced - automatyczny build
-            🔧 Patches version: ${{ env.VERSION_TAG }}
-            📦 Wykluczono łatkę: theme
+          body_path: youtube_changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -83,7 +82,7 @@ jobs:
         run: |
           REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
           
-          # Pobieramy Twój tag i usuwamy prefix "PikoX-"
+          # Pobieramy Twoje ostatnie wydanie PikoX
           LOCAL_TAG=$(gh release list --limit 20 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
           
           echo "Wersja u anndea: $REMOTE_TAG"
@@ -92,6 +91,8 @@ jobs:
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
             echo "should_build=true" >> $GITHUB_ENV
             echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
+            # Pobieranie treści changeloga
+            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > pikox_changelog.txt
           else
             echo "should_build=false" >> $GITHUB_ENV
           fi
@@ -119,9 +120,6 @@ jobs:
           files: github-builds/*.apk
           tag_name: PikoX-${{ env.VERSION_TAG }}
           name: Piko X (Twitter) anndea ${{ env.VERSION_TAG }}
-          body: |
-            📱 Piko X (Twitter) ReVanced - automatyczny build
-            🔧 Patches version: ${{ env.VERSION_TAG }}
-            📦 Wykluczono łatkę: custom-branding (zachowano logo X)
+          body_path: pikox_changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
