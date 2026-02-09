@@ -8,7 +8,7 @@ jobs:
   # --- JOB 1: YOUTUBE ---
   build-youtube:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
@@ -20,11 +20,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
-          LOCAL_RELEASES=$(gh release list --limit 5)
+          # Pobieramy tag z repozytorium anndea (z filtrowaniem pustych linii)
+          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk 'NF {print $3}' || echo "null")
           
+          # Sprawdzamy lokalne wydania
+          LOCAL_RELEASES=$(gh release list --limit 10)
           if [ -z "$LOCAL_RELEASES" ]; then
-            echo "Pierwszy start: brak wydań. Wymuszam build."
+            echo "Pierwszy start: brak wydań."
             LOCAL_TAG="none"
           else
             LOCAL_TAG=$(echo "$LOCAL_RELEASES" | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
@@ -52,7 +54,9 @@ jobs:
         if: env.should_build == 'true'
         run: |
           rm -rf github-builds
-          npx revanced-creator build \
+          # Instalacja bezpośrednio z repozytorium twórcy (omijamy błąd 404 w npm registry)
+          npm install -g https://github.com/decipher3114/revanced-creator
+          revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
             --exclude "theme"
@@ -71,7 +75,7 @@ jobs:
   # --- JOB 2: PIKO X (TWITTER) ---
   build-piko-x:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
@@ -83,11 +87,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk '{print $3}' || echo "null")
-          LOCAL_RELEASES=$(gh release list --limit 5)
+          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk 'NF {print $3}' || echo "null")
+          LOCAL_RELEASES=$(gh release list --limit 10)
           
           if [ -z "$LOCAL_RELEASES" ]; then
-            echo "Pierwszy start: brak wydań. Wymuszam build."
             LOCAL_TAG="none"
           else
             LOCAL_TAG=$(echo "$LOCAL_RELEASES" | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
@@ -112,7 +115,8 @@ jobs:
         if: env.should_build == 'true'
         run: |
           rm -rf github-builds
-          npx revanced-creator build \
+          npm install -g https://github.com/decipher3114/revanced-creator
+          revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.twitter.android \
             --exclude "custom-branding"
@@ -127,4 +131,3 @@ jobs:
           body_path: pikox_changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
