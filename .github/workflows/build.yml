@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # KROK 1: Sprawdzenie wersji (Oszczędność czasu i API)
   check-updates:
     runs-on: ubuntu-latest
     outputs:
@@ -20,38 +19,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Pobranie najnowszego tagu od anndea przez API
+          # Pobieramy najnowszy tag od anndea
           REMOTE_TAG=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases/latest | jq -r .tag_name)
           
-          # Sprawdzenie Twoich lokalnych wydań
-          LOCAL_YT=$(gh release list --limit 10 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
-          LOCAL_PX=$(gh release list --limit 10 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
+          # Sprawdzamy Twoje wydania
+          LOCAL_YT=$(gh release list --limit 10 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "")
+          LOCAL_PX=$(gh release list --limit 10 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "")
           
           echo "Remote version: $REMOTE_TAG"
           echo "Local YouTube: $LOCAL_YT"
           echo "Local PikoX: $LOCAL_PX"
           
-          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "" ] && \
-             ([ "$REMOTE_TAG" != "$LOCAL_YT" ] || [ "$REMOTE_TAG" != "$LOCAL_PX" ]); then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "version_tag=$REMOTE_TAG" >> $GITHUB_OUTPUT
-            
-            # Pobranie changeloga raz dla obu zadań
-            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches \
-              --json body --template '{{.body}}' > changelog.txt || \
-              echo "No changelog available" > changelog.txt
+          # Jeśli REMOTE_TAG nie jest pusty i (jest inny niż YT LUB inny niż PX LUB któryś jest pusty)
+          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "" ]; then
+            if [ "$REMOTE_TAG" != "$LOCAL_YT" ] || [ "$REMOTE_TAG" != "$LOCAL_PX" ]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              echo "version_tag=$REMOTE_TAG" >> $GITHUB_OUTPUT
+              
+              gh release view "$REMOTE_TAG" --repo anndea/revanced-patches \
+                --json body --template '{{.body}}' > changelog.txt || \
+                echo "No changelog available" > changelog.txt
+            else
+              echo "should_build=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "should_build=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload Changelog Artifact
+      - name: Upload Changelog
         if: steps.check.outputs.should_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: changelog
           path: changelog.txt
 
-  # KROK 2: Budowanie YouTube
   build-youtube:
     needs: check-updates
     if: needs.check-updates.outputs.should_build == 'true'
@@ -91,7 +92,10 @@ jobs:
             --app com.google.android.youtube \
             --exclude "theme"
           
-          if [ ! -f github-builds/*.apk ]; then exit 1; fi
+          if [ ! -f github-builds/*.apk ]; then 
+            echo "Błąd: Nie wygenerowano APK"
+            exit 1
+          fi
 
       - name: Download Changelog
         if: steps.release_check.outputs.exists == 'false'
@@ -110,7 +114,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # KROK 3: Budowanie Piko X (Twitter)
   build-piko-x:
     needs: check-updates
     if: needs.check-updates.outputs.should_build == 'true'
@@ -150,7 +153,10 @@ jobs:
             --app com.twitter.android \
             --exclude "custom-branding"
           
-          if [ ! -f github-builds/*.apk ]; then exit 1; fi
+          if [ ! -f github-builds/*.apk ]; then 
+            echo "Błąd: Nie wygenerowano APK"
+            exit 1
+          fi
 
       - name: Download Changelog
         if: steps.release_check.outputs.exists == 'false'
