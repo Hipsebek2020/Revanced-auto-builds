@@ -5,8 +5,56 @@ on:
   workflow_dispatch:
 
 jobs:
-  # --- JOB 1: YOUTUBE ---
+  # KROK 1: Sprawdzenie wersji (Oszczędność czasu i API)
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      version_tag: ${{ steps.check.outputs.version_tag }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check for Updates
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pobranie najnowszego tagu od anndea przez API
+          REMOTE_TAG=$(curl -s https://api.github.com/repos/anndea/revanced-patches/releases/latest | jq -r .tag_name)
+          
+          # Sprawdzenie Twoich lokalnych wydań
+          LOCAL_YT=$(gh release list --limit 10 | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
+          LOCAL_PX=$(gh release list --limit 10 | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
+          
+          echo "Remote version: $REMOTE_TAG"
+          echo "Local YouTube: $LOCAL_YT"
+          echo "Local PikoX: $LOCAL_PX"
+          
+          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "" ] && \
+             ([ "$REMOTE_TAG" != "$LOCAL_YT" ] || [ "$REMOTE_TAG" != "$LOCAL_PX" ]); then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "version_tag=$REMOTE_TAG" >> $GITHUB_OUTPUT
+            
+            # Pobranie changeloga raz dla obu zadań
+            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches \
+              --json body --template '{{.body}}' > changelog.txt || \
+              echo "No changelog available" > changelog.txt
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Changelog Artifact
+        if: steps.check.outputs.should_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: changelog.txt
+
+  # KROK 2: Budowanie YouTube
   build-youtube:
+    needs: check-updates
+    if: needs.check-updates.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -15,65 +63,57 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check for YouTube Updates
-        id: check
+      - name: Check if YouTube Release Exists
+        id: release_check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Pobieramy tag z repozytorium anndea (z filtrowaniem pustych linii)
-          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk 'NF {print $3}' || echo "null")
-          
-          # Sprawdzamy lokalne wydania
-          LOCAL_RELEASES=$(gh release list --limit 10)
-          if [ -z "$LOCAL_RELEASES" ]; then
-            echo "Pierwszy start: brak wydań."
-            LOCAL_TAG="none"
+          if gh release view "YouTube-${{ needs.check-updates.outputs.version_tag }}" &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
           else
-            LOCAL_TAG=$(echo "$LOCAL_RELEASES" | grep "YouTube-" | head -n 1 | awk '{print $3}' | sed 's/YouTube-//' || echo "none")
-          fi
-          
-          echo "Wersja u anndea: $REMOTE_TAG"
-          echo "Twoja wersja: $LOCAL_TAG"
-          
-          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
-            echo "should_build=true" >> $GITHUB_ENV
-            echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > youtube_changelog.txt || echo "Brak opisu" > youtube_changelog.txt
-          else
-            echo "should_build=false" >> $GITHUB_ENV
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up JDK 17
-        if: env.should_build == 'true'
+        if: steps.release_check.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Build YouTube
-        if: env.should_build == 'true'
+        if: steps.release_check.outputs.exists == 'false'
         run: |
           rm -rf github-builds
-          # Instalacja bezpośrednio z repozytorium twórcy (omijamy błąd 404 w npm registry)
-          npm install -g https://github.com/decipher3114/revanced-creator
+          npm install -g https://github.com/decipher3114/revanced-creator.git
           revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
             --exclude "theme"
+          
+          if [ ! -f github-builds/*.apk ]; then exit 1; fi
+
+      - name: Download Changelog
+        if: steps.release_check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
 
       - name: Create YouTube Release
-        if: env.should_build == 'true'
+        if: steps.release_check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v1
         with:
           files: github-builds/*.apk
-          tag_name: YouTube-${{ env.VERSION_TAG }}
-          name: YouTube anndea ${{ env.VERSION_TAG }}
-          body_path: youtube_changelog.txt
+          tag_name: YouTube-${{ needs.check-updates.outputs.version_tag }}
+          name: YouTube anndea ${{ needs.check-updates.outputs.version_tag }}
+          body_path: changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # --- JOB 2: PIKO X (TWITTER) ---
+  # KROK 3: Budowanie Piko X (Twitter)
   build-piko-x:
+    needs: check-updates
+    if: needs.check-updates.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -82,52 +122,49 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check for Piko X Updates
-        id: check
+      - name: Check if PikoX Release Exists
+        id: release_check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REMOTE_TAG=$(gh release list --repo anndea/revanced-patches --limit 1 | awk 'NF {print $3}' || echo "null")
-          LOCAL_RELEASES=$(gh release list --limit 10)
-          
-          if [ -z "$LOCAL_RELEASES" ]; then
-            LOCAL_TAG="none"
+          if gh release view "PikoX-${{ needs.check-updates.outputs.version_tag }}" &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
           else
-            LOCAL_TAG=$(echo "$LOCAL_RELEASES" | grep "PikoX-" | head -n 1 | awk '{print $3}' | sed 's/PikoX-//' || echo "none")
-          fi
-          
-          if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "$LOCAL_TAG" ]; then
-            echo "should_build=true" >> $GITHUB_ENV
-            echo "VERSION_TAG=$REMOTE_TAG" >> $GITHUB_ENV
-            gh release view "$REMOTE_TAG" --repo anndea/revanced-patches --json body --template '{{.body}}' > pikox_changelog.txt || echo "Brak opisu" > pikox_changelog.txt
-          else
-            echo "should_build=false" >> $GITHUB_ENV
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up JDK 17
-        if: env.should_build == 'true'
+        if: steps.release_check.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Build Piko X
-        if: env.should_build == 'true'
+        if: steps.release_check.outputs.exists == 'false'
         run: |
           rm -rf github-builds
-          npm install -g https://github.com/decipher3114/revanced-creator
+          npm install -g https://github.com/decipher3114/revanced-creator.git
           revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.twitter.android \
             --exclude "custom-branding"
+          
+          if [ ! -f github-builds/*.apk ]; then exit 1; fi
+
+      - name: Download Changelog
+        if: steps.release_check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
 
       - name: Create Piko X Release
-        if: env.should_build == 'true'
+        if: steps.release_check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v1
         with:
           files: github-builds/*.apk
-          tag_name: PikoX-${{ env.VERSION_TAG }}
-          name: Piko X (Twitter) anndea ${{ env.VERSION_TAG }}
-          body_path: pikox_changelog.txt
+          tag_name: PikoX-${{ needs.check-updates.outputs.version_tag }}
+          name: Piko X (Twitter) anndea ${{ needs.check-updates.outputs.version_tag }}
+          body_path: changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
