@@ -1,0 +1,6 @@
+{
+  "exclude": {
+    "com.google.android.youtube": ["material-you"],
+    "com.twitter.android": ["custom-branding"]
+  }
+}

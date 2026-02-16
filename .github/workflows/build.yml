@@ -1,7 +1,7 @@
 name: Build YouTube & Piko X (Twitter)
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 * * * *'  # Sprawdza co godzinę czy są nowe łatki
   workflow_dispatch:
 
 jobs:
@@ -90,7 +90,7 @@ jobs:
           revanced-creator build \
             --repo anndea/revanced-patches \
             --app com.google.android.youtube \
-            --exclude "theme"
+            --exclude "material-you"
           
           if [ ! -f github-builds/*.apk ]; then 
             echo "Błąd: Nie wygenerowano APK"
