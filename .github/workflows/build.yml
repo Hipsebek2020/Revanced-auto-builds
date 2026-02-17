@@ -30,9 +30,16 @@ jobs:
           echo "Local YouTube: $LOCAL_YT"
           echo "Local PikoX: $LOCAL_PX"
           
-          # Jeśli REMOTE_TAG nie jest pusty i (jest inny niż YT LUB inny niż PX LUB któryś jest pusty)
+          # Jeśli REMOTE_TAG nie jest pusty i (jest inny niż YT LUB inny niż PX)
           if [ "$REMOTE_TAG" != "null" ] && [ "$REMOTE_TAG" != "" ]; then
-            if [ "$REMOTE_TAG" != "$LOCAL_YT" ] || [ "$REMOTE_TAG" != "$LOCAL_PX" ]; then
+            if [ "$REMOTE_TAG" != "$LOCAL_YT" ]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              echo "version_tag=$REMOTE_TAG" >> $GITHUB_OUTPUT
+              
+              gh release view "$REMOTE_TAG" --repo anndea/revanced-patches \
+                --json body --template '{{.body}}' > changelog.txt || \
+                echo "No changelog available" > changelog.txt
+            elif [ "$REMOTE_TAG" != "$LOCAL_PX" ]; then
               echo "should_build=true" >> $GITHUB_OUTPUT
               echo "version_tag=$REMOTE_TAG" >> $GITHUB_OUTPUT
               
