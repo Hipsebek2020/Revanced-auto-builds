@@ -1,5 +1,5 @@
 {
-  "patches": "anndea/revanced-patches",
+  "patches": "anddea/revanced-patches",
   "integrations": "ReVanced/revanced-integrations",
   "tools": "ReVanced/revanced-cli"
 }
